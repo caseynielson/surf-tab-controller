@@ -12,94 +12,185 @@ ActuatorController::ActuatorController(
   _pin_r_en(pin_r_en), _pin_l_en(pin_l_en),
   _pin_r_is(pin_r_is), _pin_l_is(pin_l_is),
   _ledc_rpwm_ch(ledc_rpwm_ch), _ledc_lpwm_ch(ledc_lpwm_ch)
-{}
+{
+  // NVS key: lowercase name + "_ms", max 15 chars (e.g. "PORT" -> "port_ms")
+  snprintf(_nvs_key, sizeof(_nvs_key), "%.8s_ms", name);
+  for (char* p = _nvs_key; *p; p++) *p = tolower((unsigned char)*p);
+}
+
+// ---- Init -------------------------------------------------------------------
 
 void ActuatorController::begin() {
-  // Setup PWM via ledc (ESP32 Arduino core v3.x API)
   ledcAttach(_pin_rpwm, ACTUATOR_PWM_FREQ, ACTUATOR_PWM_RES);
   ledcAttach(_pin_lpwm, ACTUATOR_PWM_FREQ, ACTUATOR_PWM_RES);
-
-  // Enable pins
   pinMode(_pin_r_en, OUTPUT);
   pinMode(_pin_l_en, OUTPUT);
   digitalWrite(_pin_r_en, LOW);
   digitalWrite(_pin_l_en, LOW);
-
-  // Current sense — ADC input only pins, no setup needed
-  // (IO34, IO35, IO36, IO39 are input-only on ESP32)
-
   _stopMotor();
-  Serial.printf("[%s] initialized\n", _name);
+  loadCalibration();  // sets _fullTravelMs from NVS if available
+  Serial.printf("[%s] ready (fullTravel=%lums)\n", _name, _fullTravelMs);
 }
 
-bool ActuatorController::home() {
-  Serial.printf("[%s] homing — retracting to stall...\n", _name);
-  _state = ActuatorState::HOMING;
-  _homed = false;
+// ---- Calibration ------------------------------------------------------------
 
-  _retract(ACTUATOR_FULL_SPEED);
+void ActuatorController::loadCalibration() {
+  Preferences prefs;
+  prefs.begin("surftab", true);
+  uint32_t stored = prefs.getUInt(_nvs_key, 0);
+  prefs.end();
+  if (stored >= 1000 && stored <= 30000) {
+    _fullTravelMs = stored;
+    Serial.printf("[%s] calibration loaded: %lums\n", _name, _fullTravelMs);
+  } else {
+    Serial.printf("[%s] no NVS calibration -- using default %lums (run CAL)\n",
+                  _name, _fullTravelMs);
+  }
+}
 
-  uint32_t startMs = millis();
+void ActuatorController::saveCalibration(uint32_t travelMs) {
+  Preferences prefs;
+  prefs.begin("surftab", false);
+  prefs.putUInt(_nvs_key, travelMs);
+  prefs.end();
+  Serial.printf("[%s] calibration saved: %lums\n", _name, travelMs);
+}
+
+uint32_t ActuatorController::calibrate() {
+  Serial.printf("\n[%s] === CALIBRATION START ===\n", _name);
+  Serial.printf("[%s] Step 1: homing...\n", _name);
+
+  if (!home()) {
+    Serial.printf("[%s] CALIBRATION FAILED: homing failed\n", _name);
+    return 0;
+  }
+
+  Serial.printf("[%s] Step 2: extending to stall -- watch ADC values below\n", _name);
+  Serial.printf("[%s]   (STALL_THRESHOLD currently = %d)\n", _name, STALL_THRESHOLD);
+  Serial.printf("[%s]   t(ms)   ADC\n", _name);
+
+  _extend(ACTUATOR_FULL_SPEED);
+
+  uint32_t startMs      = millis();
+  uint32_t lastPrintMs  = 0;
   uint32_t stallStartMs = 0;
-  bool stallPending = false;
+  bool     stallPending = false;
+  int      runningMax   = 0;
+  int      stallAdc     = 0;
 
   while (true) {
-    // Timeout guard
-    if (millis() - startMs > HOME_RETRACT_TIMEOUT_MS) {
+    if (millis() - startMs > CAL_EXTEND_TIMEOUT_MS) {
       _stopMotor();
       _state = ActuatorState::ERROR;
-      Serial.printf("[%s] homing TIMEOUT — check wiring\n", _name);
-      return false;
+      Serial.printf("[%s] CALIBRATION TIMEOUT (%dms) -- stall never detected\n",
+                    _name, CAL_EXTEND_TIMEOUT_MS);
+      Serial.printf("[%s]   Check: 680 Ohm on IS pins? Motor powered? Direction correct?\n",
+                    _name);
+      return 0;
     }
 
-    // Read current sense on retract (L_IS)
-    int adc = analogRead(_pin_l_is);
+    int adc = analogRead(_pin_r_is);
+
+    if (millis() - lastPrintMs >= 250) {
+      Serial.printf("[%s]   %5lu   %4d%s\n",
+                    _name, millis() - startMs, adc,
+                    (adc > STALL_THRESHOLD) ? "  <- STALL?" : "");
+      lastPrintMs = millis();
+    }
 
     if (adc > STALL_THRESHOLD) {
       if (!stallPending) {
         stallPending = true;
         stallStartMs = millis();
+        stallAdc     = adc;
       } else if (millis() - stallStartMs >= STALL_CONFIRM_MS) {
-        // Confirmed stall — we're home
+        uint32_t travelMs = millis() - startMs;
         _stopMotor();
-        _positionMs = 0;
-        _homed = true;
-        _state = ActuatorState::IDLE;
-        Serial.printf("[%s] homed OK (stall ADC=%d, t=%lums)\n",
-                      _name, adc, millis() - startMs);
-        return true;
+        _positionMs   = travelMs;
+        _fullTravelMs = travelMs;
+        _state        = ActuatorState::IDLE;
+
+        Serial.printf("\n[%s] === CALIBRATION COMPLETE ===\n",        _name);
+        Serial.printf("[%s]   Full travel time         : %lu ms\n",   _name, travelMs);
+        Serial.printf("[%s]   Running ADC peak         : %d\n",       _name, runningMax);
+        Serial.printf("[%s]   Stall ADC                : %d\n",       _name, stallAdc);
+        Serial.printf("[%s]   Suggested STALL_THRESHOLD: %d\n",
+                      _name, (runningMax + stallAdc) / 2);
+        Serial.printf("[%s]   Actuator at full extension -- caller will home()\n", _name);
+
+        saveCalibration(travelMs);
+        return travelMs;
       }
     } else {
       stallPending = false;
+      if (adc > runningMax) runningMax = adc;
     }
 
     delay(10);
   }
 }
 
+// ---- Home -------------------------------------------------------------------
+
+bool ActuatorController::home() {
+  Serial.printf("[%s] homing -- retracting to stall...\n", _name);
+  _state = ActuatorState::HOMING;
+  _homed = false;
+  _retract(ACTUATOR_FULL_SPEED);
+
+  uint32_t startMs      = millis();
+  uint32_t stallStartMs = 0;
+  bool     stallPending = false;
+
+  while (true) {
+    if (millis() - startMs > HOME_RETRACT_TIMEOUT_MS) {
+      _stopMotor();
+      _state = ActuatorState::ERROR;
+      Serial.printf("[%s] homing TIMEOUT -- check wiring\n", _name);
+      return false;
+    }
+    int adc = analogRead(_pin_l_is);
+    if (adc > STALL_THRESHOLD) {
+      if (!stallPending) {
+        stallPending = true;
+        stallStartMs = millis();
+      } else if (millis() - stallStartMs >= STALL_CONFIRM_MS) {
+        _stopMotor();
+        _positionMs = 0;
+        _homed      = true;
+        _state      = ActuatorState::IDLE;
+        Serial.printf("[%s] homed OK (stallADC=%d, t=%lums)\n",
+                      _name, adc, millis() - startMs);
+        return true;
+      }
+    } else {
+      stallPending = false;
+    }
+    delay(10);
+  }
+}
+
+// ---- Movement ---------------------------------------------------------------
+
 void ActuatorController::goToPosition(uint32_t targetMs) {
   if (!_homed) {
-    Serial.printf("[%s] goToPosition called before homing — ignored\n", _name);
+    Serial.printf("[%s] goToPosition called before homing -- ignored\n", _name);
     return;
   }
-
-  targetMs = constrain(targetMs, 0, ACTUATOR_FULL_TRAVEL_MS);
+  targetMs = constrain(targetMs, 0, _fullTravelMs);
   _targetMs = targetMs;
-
-  if (targetMs == _positionMs) {
-    return;
-  }
+  if (targetMs == _positionMs) return;
 
   _posAtMoveStart = _positionMs;
   _moveStartMs    = millis();
   _stallPending   = false;
 
   if (targetMs > _positionMs) {
-    Serial.printf("[%s] extending: %lums → %lums\n", _name, _positionMs, targetMs);
+    Serial.printf("[%s] extending: %lums -> %lums\n", _name, _positionMs, targetMs);
     _state = ActuatorState::EXTENDING;
     _extend(ACTUATOR_FULL_SPEED);
   } else {
-    Serial.printf("[%s] retracting: %lums → %lums\n", _name, _positionMs, targetMs);
+    Serial.printf("[%s] retracting: %lums -> %lums\n", _name, _positionMs, targetMs);
     _state = ActuatorState::RETRACTING;
     _retract(ACTUATOR_FULL_SPEED);
   }
@@ -107,14 +198,12 @@ void ActuatorController::goToPosition(uint32_t targetMs) {
 
 void ActuatorController::stop() {
   _stopMotor();
-  // Update position estimate based on time moved
   if (_state == ActuatorState::EXTENDING || _state == ActuatorState::RETRACTING) {
     uint32_t elapsed = millis() - _moveStartMs;
-    if (_state == ActuatorState::EXTENDING) {
-      _positionMs = min(_posAtMoveStart + elapsed, (uint32_t)ACTUATOR_FULL_TRAVEL_MS);
-    } else {
+    if (_state == ActuatorState::EXTENDING)
+      _positionMs = min(_posAtMoveStart + elapsed, _fullTravelMs);
+    else
       _positionMs = (_posAtMoveStart > elapsed) ? _posAtMoveStart - elapsed : 0;
-    }
   }
   _state = ActuatorState::IDLE;
   Serial.printf("[%s] stopped at ~%lums\n", _name, _positionMs);
@@ -126,59 +215,67 @@ void ActuatorController::update() {
   uint32_t elapsed = millis() - _moveStartMs;
 
   if (_state == ActuatorState::EXTENDING) {
-    _positionMs = min(_posAtMoveStart + elapsed, (uint32_t)ACTUATOR_FULL_TRAVEL_MS);
-
-    // Check for stall (unexpected obstruction)
+    _positionMs = min(_posAtMoveStart + elapsed, _fullTravelMs);
     if (_checkStall()) {
       _stopMotor();
       _state = ActuatorState::STALLED;
       Serial.printf("[%s] STALL during extend at ~%lums\n", _name, _positionMs);
       return;
     }
-
-    // Reached target?
     if (_positionMs >= _targetMs) {
       _stopMotor();
       _positionMs = _targetMs;
-      _state = ActuatorState::IDLE;
+      _state      = ActuatorState::IDLE;
       Serial.printf("[%s] reached %lums\n", _name, _positionMs);
     }
 
   } else if (_state == ActuatorState::RETRACTING) {
-    uint32_t newPos = (_posAtMoveStart > elapsed) ? _posAtMoveStart - elapsed : 0;
-    _positionMs = newPos;
-
+    _positionMs = (_posAtMoveStart > elapsed) ? _posAtMoveStart - elapsed : 0;
     if (_checkStall()) {
       _stopMotor();
-      // If we stall near home during a retract, treat as homed
       if (_positionMs < 200) {
         _positionMs = 0;
-        _state = ActuatorState::IDLE;
-        Serial.printf("[%s] stall at near-home, position reset to 0\n", _name);
+        _state      = ActuatorState::IDLE;
+        Serial.printf("[%s] stall near home -- position reset to 0\n", _name);
       } else {
         _state = ActuatorState::STALLED;
         Serial.printf("[%s] STALL during retract at ~%lums\n", _name, _positionMs);
       }
       return;
     }
-
     if (_positionMs <= _targetMs) {
       _stopMotor();
       _positionMs = _targetMs;
-      _state = ActuatorState::IDLE;
+      _state      = ActuatorState::IDLE;
       Serial.printf("[%s] reached %lums\n", _name, _positionMs);
     }
   }
 }
 
+// ---- ADC / Stall ------------------------------------------------------------
+
 int ActuatorController::readCurrentADC() const {
-  if (_state == ActuatorState::EXTENDING || _state == ActuatorState::HOMING) {
+  if (_state == ActuatorState::EXTENDING || _state == ActuatorState::HOMING)
     return analogRead(_pin_r_is);
-  }
   return analogRead(_pin_l_is);
 }
 
-// ── Private ───────────────────────────────────────────────────────────────────
+bool ActuatorController::_checkStall() {
+  int adc = readCurrentADC();
+  if (adc > STALL_THRESHOLD) {
+    if (!_stallPending) {
+      _stallPending = true;
+      _stallStartMs = millis();
+    } else if (millis() - _stallStartMs >= STALL_CONFIRM_MS) {
+      return true;
+    }
+  } else {
+    _stallPending = false;
+  }
+  return false;
+}
+
+// ---- Motor control ----------------------------------------------------------
 
 void ActuatorController::_extend(uint8_t speed) {
   digitalWrite(_pin_l_en, LOW);
@@ -199,19 +296,4 @@ void ActuatorController::_stopMotor() {
   digitalWrite(_pin_l_en, LOW);
   ledcWrite(_pin_rpwm, 0);
   ledcWrite(_pin_lpwm, 0);
-}
-
-bool ActuatorController::_checkStall() {
-  int adc = readCurrentADC();
-  if (adc > STALL_THRESHOLD) {
-    if (!_stallPending) {
-      _stallPending = true;
-      _stallStartMs = millis();
-    } else if (millis() - _stallStartMs >= STALL_CONFIRM_MS) {
-      return true;
-    }
-  } else {
-    _stallPending = false;
-  }
-  return false;
 }

@@ -1,14 +1,20 @@
 #pragma once
 
 #include <Arduino.h>
+#include <Preferences.h>
 #include "config.h"
 
 /*
- * ActuatorController — drives one IBT-2 (BTS7960) H-bridge + Lenco linear actuator
+ * ActuatorController - drives one IBT-2 (BTS7960) H-bridge + Lenco linear actuator
  *
  * Position tracking is time-based (ms from home).
- * Home = fully retracted, detected by current stall.
- * No external position sensor required.
+ * Home = fully retracted, detected by current stall on the IS pin.
+ *
+ * Calibration:
+ *   Call calibrate() once on the bench with the actuator free to travel fully.
+ *   It homes, then extends to stall, measures travel time, and saves to NVS.
+ *   On every subsequent boot, loadCalibration() (called inside begin()) restores it.
+ *   Presets in the .ino use percentages * getFullTravel(), so they stay correct.
  */
 
 enum class ActuatorState {
@@ -30,50 +36,59 @@ public:
     uint8_t ledc_rpwm_ch, uint8_t ledc_lpwm_ch
   );
 
+  // Initialize GPIO/PWM and load calibration from NVS
   void begin();
 
   // Blocking home: retract to stall, set position = 0
-  // Returns true if homed successfully, false on timeout
   bool home();
 
   // Non-blocking: start moving toward target position (ms from home)
   void goToPosition(uint32_t targetMs);
 
-  // Immediate stop
+  // Immediate stop, updates position estimate
   void stop();
 
-  // Call from loop() — updates position estimate, checks for stall
+  // Call from loop() - advances state machine, checks for stall
   void update();
 
-  // Accessors
-  uint32_t getPosition() const { return _positionMs; }
-  uint32_t getTarget()   const { return _targetMs; }
-  ActuatorState getState() const { return _state; }
-  bool isHomed()   const { return _homed; }
-  bool isBusy()    const { return _state == ActuatorState::EXTENDING ||
-                                  _state == ActuatorState::RETRACTING ||
-                                  _state == ActuatorState::HOMING; }
-  int  readCurrentADC() const;   // raw ADC of active IS pin
+  // Calibrate: home then extend to stall, measuring full travel time.
+  // Prints ADC every 250ms throughout - use output to tune STALL_THRESHOLD.
+  // Saves result to NVS. Actuator left at full extension on return.
+  // Returns measured travel ms, or 0 on failure.
+  uint32_t calibrate();
+
+  // NVS persistence - loadCalibration() called automatically in begin()
+  void loadCalibration();
+  void saveCalibration(uint32_t travelMs);
+
+  uint32_t      getPosition()   const { return _positionMs; }
+  uint32_t      getTarget()     const { return _targetMs; }
+  uint32_t      getFullTravel() const { return _fullTravelMs; }
+  ActuatorState getState()      const { return _state; }
+  bool isHomed() const { return _homed; }
+  bool isBusy()  const { return _state == ActuatorState::EXTENDING  ||
+                                _state == ActuatorState::RETRACTING ||
+                                _state == ActuatorState::HOMING; }
+  int readCurrentADC() const;
 
 private:
   const char* _name;
+  char        _nvs_key[16];  // e.g. "port_ms", "stbd_ms"
 
-  // Pins
   uint8_t _pin_rpwm, _pin_lpwm;
   uint8_t _pin_r_en, _pin_l_en;
   uint8_t _pin_r_is, _pin_l_is;
   uint8_t _ledc_rpwm_ch, _ledc_lpwm_ch;
 
-  // State
-  ActuatorState _state     = ActuatorState::IDLE;
-  uint32_t      _positionMs = 0;
-  uint32_t      _targetMs   = 0;
-  bool          _homed       = false;
+  ActuatorState _state        = ActuatorState::IDLE;
+  uint32_t      _positionMs   = 0;
+  uint32_t      _targetMs     = 0;
+  uint32_t      _fullTravelMs = ACTUATOR_DEFAULT_TRAVEL_MS;
+  bool          _homed        = false;
 
-  // Internal timing
-  uint32_t _moveStartMs    = 0;   // millis() when move began
-  uint32_t _posAtMoveStart = 0;   // _positionMs when move began
-  uint32_t _stallStartMs   = 0;   // when current first exceeded threshold
+  uint32_t _moveStartMs    = 0;
+  uint32_t _posAtMoveStart = 0;
+  uint32_t _stallStartMs   = 0;
   bool     _stallPending   = false;
 
   void _extend(uint8_t speed = ACTUATOR_FULL_SPEED);
