@@ -20,8 +20,8 @@
  */
 
 // ── Port tab actuator (IBT-2 #1) ─────────────────────────────────────────────
-#define PORT_RPWM   25   // Extend PWM
-#define PORT_LPWM   26   // Retract PWM
+#define PORT_RPWM   18   // Extend PWM (avoid GPIO25/26 — DAC pins, conflict with ledcAttach)
+#define PORT_LPWM   19   // Retract PWM (avoid GPIO25/26 — DAC pins, conflict with ledcAttach)
 #define PORT_R_EN   27   // Forward enable
 #define PORT_L_EN   14   // Reverse enable
 #define PORT_R_IS   34   // Forward current sense (ADC, input only)

@@ -53,6 +53,18 @@ Home position (fully retracted) is detected by motor stall current via IBT-2 IS 
 | TX (to CYD RX) | 17 |
 | RX (from CYD TX) | 16 |
 
+## IBT-2 Drive Logic
+
+**Both R_EN and L_EN must be HIGH whenever the motor is running.** Direction is controlled by which PWM channel is active — not by toggling enables. With either EN pin LOW, that half-bridge output goes HIGH-Z and current cannot flow through the motor.
+
+| Direction | R_EN | L_EN | RPWM | LPWM |
+|-----------|------|------|------|------|
+| Extend    | HIGH | HIGH | PWM  | 0    |
+| Retract   | HIGH | HIGH | 0    | PWM  |
+| Stop      | LOW  | LOW  | 0    | 0    |
+
+**Avoid GPIO 25 and 26 for PWM outputs.** These are DAC-capable pins on ESP32 and conflict with `ledcAttach`, potentially outputting a DC analog voltage instead of proper PWM. PORT RPWM/LPWM use GPIO 18/19 instead.
+
 ## IBT-2 Current Sense Wiring
 
 The IBT-2 R_IS and L_IS pins are open-drain current sources. Add a **680Ω resistor** from each IS pin to GND to produce a readable voltage:

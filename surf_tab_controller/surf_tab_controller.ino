@@ -142,6 +142,10 @@ void handleCommand(const String& raw) {
       currentPreset, systemReady,
       (pFull != ACTUATOR_DEFAULT_TRAVEL_MS) ? "yes" : "no (run CAL)");
   }
+  else if (c == "A" || c == "ADC") {
+    Serial.printf("R_IS(34)=%4d  L_IS(35)=%4d\n",
+      analogRead(PORT_R_IS), analogRead(PORT_L_IS));
+  }
   else if (c == "HELP") {
     Serial.println("Commands:");
     Serial.println("  CAL          -- measure full travel, save to NVS, suggest threshold");
@@ -152,6 +156,7 @@ void handleCommand(const String& raw) {
     Serial.println("  D/FULL_DOWN  -- both 95%");
     Serial.println("  STOP         -- immediate stop");
     Serial.println("  STATUS       -- positions and calibration state");
+    Serial.println("  ADC          -- read raw current sense ADC values (debug)");
   }
   else if (c.length() > 0) {
     Serial.printf("Unknown: %s (type HELP)\n", c.c_str());
@@ -162,6 +167,7 @@ void handleCommand(const String& raw) {
 
 void setup() {
   Serial.begin(SERIAL_BAUD);
+  Serial.setTimeout(50);  // Don't block >50ms waiting for newline — prevents IDE freeze
   Serial.println("\n=== Surf Tab Controller ===");
   Serial.println("2007 Malibu Wakesetter 247");
 
@@ -172,8 +178,15 @@ void setup() {
   portTab.begin();   // loads calibration from NVS
   stbdTab.begin();
 
+  // Set to false to skip STBD during single-actuator bench testing.
+  // Set to true when both actuators are wired.
+  const bool STBD_ENABLED = false;
+
   Serial.println("Homing tabs...");
-  if (portTab.home() && stbdTab.home()) {
+  bool portOK = portTab.home();
+  bool stbdOK = STBD_ENABLED ? stbdTab.home() : true;  // skip if not wired
+
+  if (portOK && stbdOK) {
     systemReady = true;
     digitalWrite(STATUS_LED, HIGH);
     Serial.println("System ready. Type HELP for commands.");
@@ -190,7 +203,8 @@ void setup() {
 void loop() {
   if (!systemReady) {
     delay(100);
-    if (portTab.home() && stbdTab.home()) {
+    bool portOK = portTab.home();
+    if (portOK) {
       systemReady = true;
       digitalWrite(STATUS_LED, HIGH);
       Serial.println("Re-homed OK.");
@@ -210,6 +224,25 @@ void loop() {
     }
   }
 
-  if (Serial.available())   handleCommand(Serial.readStringUntil('\n'));
-  if (uiSerial.available()) handleCommand(uiSerial.readStringUntil('\n'));
+  // USB serial commands (for dev/debug) — non-blocking accumulation
+  static String serialBuf;
+  while (Serial.available()) {
+    char c = Serial.read();
+    if (c == '\n' || c == '\r') {
+      if (serialBuf.length() > 0) { handleCommand(serialBuf); serialBuf = ""; }
+    } else {
+      serialBuf += c;
+    }
+  }
+
+  // UI serial commands from CYD — non-blocking accumulation
+  static String uiBuf;
+  while (uiSerial.available()) {
+    char c = uiSerial.read();
+    if (c == '\n' || c == '\r') {
+      if (uiBuf.length() > 0) { handleCommand(uiBuf); uiBuf = ""; }
+    } else {
+      uiBuf += c;
+    }
+  }
 }

@@ -25,6 +25,9 @@
 #define ACTUATOR_FULL_SPEED         220    // PWM duty (0-255)
 
 // Stall detection
+// Running current: ADC ~298 at 3A; stall: ADC ~596 at 6A (with 680Ω IS resistor)
+// Observed stall ADC range: 450–741 — raise STALL_THRESHOLD if false triggers occur.
+// Run "CAL" and read suggested threshold from serial output.
 #define STALL_THRESHOLD           450    // ADC counts (0-4095); tune after running CAL
 #define STALL_CONFIRM_MS          150    // must exceed threshold for this long to confirm
 #define HOME_RETRACT_TIMEOUT_MS   8000   // abort homing if no stall within this time

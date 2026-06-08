@@ -278,22 +278,25 @@ bool ActuatorController::_checkStall() {
 // ---- Motor control ----------------------------------------------------------
 
 void ActuatorController::_extend(uint8_t speed) {
-  digitalWrite(_pin_l_en, LOW);
+  // Both EN pins must be HIGH to complete the H-bridge circuit.
+  // Direction is controlled by which PWM channel is active.
   ledcWrite(_pin_lpwm, 0);
-  digitalWrite(_pin_r_en, HIGH);
   ledcWrite(_pin_rpwm, speed);
+  digitalWrite(_pin_r_en, HIGH);
+  digitalWrite(_pin_l_en, HIGH);
 }
 
 void ActuatorController::_retract(uint8_t speed) {
-  digitalWrite(_pin_r_en, LOW);
   ledcWrite(_pin_rpwm, 0);
-  digitalWrite(_pin_l_en, HIGH);
   ledcWrite(_pin_lpwm, speed);
+  digitalWrite(_pin_r_en, HIGH);
+  digitalWrite(_pin_l_en, HIGH);
 }
 
 void ActuatorController::_stopMotor() {
-  digitalWrite(_pin_r_en, LOW);
-  digitalWrite(_pin_l_en, LOW);
+  // Zero PWM first, then disable — motor brakes via low-side FETs, then goes hi-Z
   ledcWrite(_pin_rpwm, 0);
   ledcWrite(_pin_lpwm, 0);
+  digitalWrite(_pin_r_en, LOW);
+  digitalWrite(_pin_l_en, LOW);
 }
