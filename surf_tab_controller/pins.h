@@ -17,6 +17,13 @@
  *   GND   → GND
  *   B+/B- → actuator wires
  *   12V/GND → boat 12V power
+ *
+ * ESP32 pins to AVOID for IBT-2 EN connections (pulled HIGH by IBT-2 = boot failure):
+ *   GPIO 0  -- must be HIGH at boot for normal run (LOW = download mode)
+ *   GPIO 2  -- must be LOW at boot; use only for onboard LED (no external pull-up)
+ *   GPIO 5  -- must be HIGH at boot for SPI flash
+ *   GPIO 12 -- sets flash voltage: LOW=3.3V (correct), HIGH=1.8V (boot fail) *** NEVER USE FOR EN ***
+ *   GPIO 15 -- controls UART boot log output
  */
 
 // ── Port tab actuator (IBT-2 #1) ─────────────────────────────────────────────
@@ -30,7 +37,7 @@
 // ── Starboard tab actuator (IBT-2 #2) ────────────────────────────────────────
 #define STBD_RPWM   32   // Extend PWM
 #define STBD_LPWM   33   // Retract PWM
-#define STBD_R_EN   12   // Forward enable
+#define STBD_R_EN    4   // Forward enable  (was GPIO12 -- strapping pin! IBT-2 pull-up held it HIGH at boot, corrupting flash voltage)
 #define STBD_L_EN   13   // Reverse enable
 #define STBD_R_IS   36   // Forward current sense (ADC, input only)
 #define STBD_L_IS   39   // Reverse current sense (ADC, input only)
