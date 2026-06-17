@@ -224,11 +224,32 @@ void setup() {
 // ---- Loop -------------------------------------------------------------------
 
 void loop() {
-  if (!systemReady) {
-    // Do NOT auto-retry homing -- motors grinding against end-stops is harmful.
-    // User must type HOME to retry or CAL to calibrate.
-    return;
+  // Serial command processing runs regardless of systemReady state.
+  // Keep this BEFORE the systemReady guard so commands always work.
+
+  // USB serial (dev/debug) — printable ASCII only, drops EMI garbage
+  static String serialBuf;
+  while (Serial.available()) {
+    char c = Serial.read();
+    if (c == '\n' || c == '\r') {
+      if (serialBuf.length() > 0) { handleCommand(serialBuf); serialBuf = ""; }
+    } else if (c >= 32 && c <= 126) {
+      if (serialBuf.length() < 64) serialBuf += c;
+    }
   }
+
+  // UI serial from CYD
+  static String uiBuf;
+  while (uiSerial.available()) {
+    char c = uiSerial.read();
+    if (c == '\n' || c == '\r') {
+      if (uiBuf.length() > 0) { handleCommand(uiBuf); uiBuf = ""; }
+    } else if (c >= 32 && c <= 126) {
+      if (uiBuf.length() < 64) uiBuf += c;
+    }
+  }
+
+  if (!systemReady) return;  // don't run actuator updates until homed
 
   portTab.update();
   stbdTab.update();
@@ -237,30 +258,6 @@ void loop() {
     if (millis() - lastStatusMs > 250) {
       broadcastStatus();
       lastStatusMs = millis();
-    }
-  }
-
-  // USB serial commands (for dev/debug) — non-blocking accumulation
-  // Only accept printable ASCII (32-126) to discard motor EMI garbage bytes.
-  static String serialBuf;
-  while (Serial.available()) {
-    char c = Serial.read();
-    if (c == '\n' || c == '\r') {
-      if (serialBuf.length() > 0) { handleCommand(serialBuf); serialBuf = ""; }
-    } else if (c >= 32 && c <= 126) {   // printable ASCII only
-      if (serialBuf.length() < 64) serialBuf += c;  // cap at 64 chars
-    }
-    // non-printable bytes silently dropped (motor EMI, etc.)
-  }
-
-  // UI serial commands from CYD — non-blocking accumulation
-  static String uiBuf;
-  while (uiSerial.available()) {
-    char c = uiSerial.read();
-    if (c == '\n' || c == '\r') {
-      if (uiBuf.length() > 0) { handleCommand(uiBuf); uiBuf = ""; }
-    } else if (c >= 32 && c <= 126) {
-      if (uiBuf.length() < 64) uiBuf += c;
     }
   }
 }

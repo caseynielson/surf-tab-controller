@@ -30,7 +30,7 @@
 // Run "CAL" and read suggested threshold from serial output.
 #define STALL_THRESHOLD           450    // ADC counts (0-4095); tune after running CAL
 #define STALL_CONFIRM_MS          150    // must exceed threshold for this long to confirm
-#define HOME_RETRACT_TIMEOUT_MS   8000   // abort homing if no stall within this time
+#define HOME_RETRACT_TIMEOUT_MS  20000   // abort homing if no stall within this time (20s covers full travel from any start position)
 #define CAL_EXTEND_TIMEOUT_MS    15000   // abort calibration extend if no stall
 
 // PWM ledc channels
@@ -46,4 +46,4 @@
 // Actuator enable flags — set false to skip homing/operation on bench
 // without that actuator wired. Both true for normal boat operation.
 #define PORT_ENABLED   true
-#define STBD_ENABLED   false
+#define STBD_ENABLED   true
