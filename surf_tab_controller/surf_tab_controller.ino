@@ -178,12 +178,8 @@ void setup() {
   portTab.begin();   // loads calibration from NVS
   stbdTab.begin();
 
-  // Set to false to skip STBD during single-actuator bench testing.
-  // Set to true when both actuators are wired.
-  const bool STBD_ENABLED = false;
-
   Serial.println("Homing tabs...");
-  bool portOK = portTab.home();
+  bool portOK = PORT_ENABLED ? portTab.home() : true;  // skip if not wired
   bool stbdOK = STBD_ENABLED ? stbdTab.home() : true;  // skip if not wired
 
   if (portOK && stbdOK) {
@@ -202,14 +198,22 @@ void setup() {
 
 void loop() {
   if (!systemReady) {
-    delay(100);
-    bool portOK = portTab.home();
-    if (portOK) {
+    // Don't hammer the actuators: wait 3s between home retries.
+    // Without 680Ω IS resistors, stall is never detected and the motor
+    // would run against the end-stop continuously. This limits damage.
+    static uint32_t nextRetryMs = 0;
+    if (millis() < nextRetryMs) return;
+    Serial.println("Retrying home... (Type CAL to calibrate, check IS resistors if failing)");
+    bool portOK = PORT_ENABLED ? portTab.home() : true;
+    bool stbdOK = STBD_ENABLED ? stbdTab.home() : true;
+    if (portOK && stbdOK) {
       systemReady = true;
       digitalWrite(STATUS_LED, HIGH);
       Serial.println("Re-homed OK.");
       uiSerial.println("READY");
       goToPreset(0);
+    } else {
+      nextRetryMs = millis() + 3000;  // 3s pause before next attempt
     }
     return;
   }
@@ -225,14 +229,16 @@ void loop() {
   }
 
   // USB serial commands (for dev/debug) — non-blocking accumulation
+  // Only accept printable ASCII (32-126) to discard motor EMI garbage bytes.
   static String serialBuf;
   while (Serial.available()) {
     char c = Serial.read();
     if (c == '\n' || c == '\r') {
       if (serialBuf.length() > 0) { handleCommand(serialBuf); serialBuf = ""; }
-    } else {
-      serialBuf += c;
+    } else if (c >= 32 && c <= 126) {   // printable ASCII only
+      if (serialBuf.length() < 64) serialBuf += c;  // cap at 64 chars
     }
+    // non-printable bytes silently dropped (motor EMI, etc.)
   }
 
   // UI serial commands from CYD — non-blocking accumulation
@@ -241,8 +247,8 @@ void loop() {
     char c = uiSerial.read();
     if (c == '\n' || c == '\r') {
       if (uiBuf.length() > 0) { handleCommand(uiBuf); uiBuf = ""; }
-    } else {
-      uiBuf += c;
+    } else if (c >= 32 && c <= 126) {
+      if (uiBuf.length() < 64) uiBuf += c;
     }
   }
 }
