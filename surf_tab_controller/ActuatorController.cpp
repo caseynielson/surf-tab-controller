@@ -5,7 +5,8 @@ ActuatorController::ActuatorController(
   uint8_t pin_rpwm, uint8_t pin_lpwm,
   uint8_t pin_r_en, uint8_t pin_l_en,
   uint8_t pin_r_is, uint8_t pin_l_is,
-  uint8_t ledc_rpwm_ch, uint8_t ledc_lpwm_ch
+  uint8_t ledc_rpwm_ch, uint8_t ledc_lpwm_ch,
+  int stallThreshold
 ) :
   _name(name),
   _pin_rpwm(pin_rpwm), _pin_lpwm(pin_lpwm),
@@ -16,6 +17,7 @@ ActuatorController::ActuatorController(
   // NVS key: lowercase name + "_ms", max 15 chars (e.g. "PORT" -> "port_ms")
   snprintf(_nvs_key, sizeof(_nvs_key), "%.8s_ms", name);
   for (char* p = _nvs_key; *p; p++) *p = tolower((unsigned char)*p);
+  _stallThreshold = stallThreshold;
 }
 
 // ---- Init -------------------------------------------------------------------
@@ -66,7 +68,7 @@ uint32_t ActuatorController::calibrate() {
   }
 
   Serial.printf("[%s] Step 2: extending to stall -- watch ADC values below\n", _name);
-  Serial.printf("[%s]   (STALL_THRESHOLD currently = %d)\n", _name, STALL_THRESHOLD);
+  Serial.printf("[%s]   (stallThreshold currently = %d)\n", _name, _stallThreshold);
   Serial.printf("[%s]   t(ms)   ADC\n", _name);
 
   _extend(ACTUATOR_FULL_SPEED);
@@ -94,11 +96,11 @@ uint32_t ActuatorController::calibrate() {
     if (millis() - lastPrintMs >= 250) {
       Serial.printf("[%s]   %5lu   %4d%s\n",
                     _name, millis() - startMs, adc,
-                    (adc > STALL_THRESHOLD) ? "  <- STALL?" : "");
+                    (adc > _stallThreshold) ? "  <- STALL?" : "");
       lastPrintMs = millis();
     }
 
-    if (adc > STALL_THRESHOLD) {
+    if (adc > _stallThreshold) {
       if (!stallPending) {
         stallPending = true;
         stallStartMs = millis();
@@ -114,7 +116,7 @@ uint32_t ActuatorController::calibrate() {
         Serial.printf("[%s]   Full travel time         : %lu ms\n",   _name, travelMs);
         Serial.printf("[%s]   Running ADC peak         : %d\n",       _name, runningMax);
         Serial.printf("[%s]   Stall ADC                : %d\n",       _name, stallAdc);
-        Serial.printf("[%s]   Suggested STALL_THRESHOLD: %d\n",
+        Serial.printf("[%s]   Suggested stallThreshold: %d\n",
                       _name, (runningMax + stallAdc) / 2);
         Serial.printf("[%s]   Actuator at full extension -- caller will home()\n", _name);
 
@@ -134,7 +136,7 @@ uint32_t ActuatorController::calibrate() {
 
 bool ActuatorController::home() {
   Serial.printf("[%s] homing -- retracting to stall (THRESHOLD=%d)...\n",
-                _name, STALL_THRESHOLD);
+                _name, _stallThreshold);
   Serial.printf("[%s]   t(ms)  L_IS\n", _name);
   _state = ActuatorState::HOMING;
   _homed = false;
@@ -150,7 +152,7 @@ bool ActuatorController::home() {
       _stopMotor();
       _state = ActuatorState::ERROR;
       Serial.printf("[%s] homing TIMEOUT (%lums) -- L_IS never exceeded %d\n",
-                    _name, millis() - startMs, STALL_THRESHOLD);
+                    _name, millis() - startMs, _stallThreshold);
       Serial.printf("[%s]   Check: IS resistors to GND? IBT-2 12V present? EN pins connected?\n", _name);
       return false;
     }
@@ -159,11 +161,11 @@ bool ActuatorController::home() {
     if (millis() - lastPrintMs >= 250) {
       Serial.printf("[%s]   %5lu  %4d%s\n",
                     _name, millis() - startMs, adc,
-                    (adc > STALL_THRESHOLD) ? "  <- STALL?" : "");
+                    (adc > _stallThreshold) ? "  <- STALL?" : "");
       lastPrintMs = millis();
     }
 
-    if (adc > STALL_THRESHOLD) {
+    if (adc > _stallThreshold) {
       if (!stallPending) {
         stallPending = true;
         stallStartMs = millis();
@@ -186,9 +188,9 @@ bool ActuatorController::home() {
 // ---- Drive test ------------------------------------------------------------
 
 int ActuatorController::driveTest(bool extend, uint16_t durationMs) {
-  Serial.printf("[%s] DRIVE TEST: %s for %ums (STALL_THRESHOLD=%d)\n",
+  Serial.printf("[%s] DRIVE TEST: %s for %ums (threshold=%d)\n",
                 _name, extend ? "EXTEND (R_IS=GPIO active)" : "RETRACT (L_IS=GPIO active)",
-                durationMs, STALL_THRESHOLD);
+                durationMs, _stallThreshold);
   Serial.printf("[%s]   t(ms)   R_IS   L_IS   active\n", _name);
 
   if (extend) _extend(ACTUATOR_FULL_SPEED);
@@ -207,14 +209,14 @@ int ActuatorController::driveTest(bool extend, uint16_t durationMs) {
     if (millis() - lastPrintMs >= 100) {
       Serial.printf("[%s]   %5lu   %4d   %4d   %4d%s\n",
                     _name, millis() - startMs, r, l, active,
-                    (active > STALL_THRESHOLD) ? "  <- STALL" : "");
+                    (active > _stallThreshold) ? "  <- STALL" : "");
       lastPrintMs = millis();
     }
     delay(10);
   }
   _stopMotor();
   Serial.printf("[%s] DRIVE TEST done -- peak active IS = %d  (threshold=%d)\n",
-                _name, peakAdc, STALL_THRESHOLD);
+                _name, peakAdc, _stallThreshold);
   return peakAdc;
 }
 
@@ -310,7 +312,7 @@ int ActuatorController::readCurrentADC() const {
 
 bool ActuatorController::_checkStall() {
   int adc = readCurrentADC();
-  if (adc > STALL_THRESHOLD) {
+  if (adc > _stallThreshold) {
     if (!_stallPending) {
       _stallPending = true;
       _stallStartMs = millis();

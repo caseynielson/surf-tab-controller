@@ -23,15 +23,23 @@
 
 HardwareSerial uiSerial(2);
 
+// Per-actuator stall thresholds (ADC counts 0-4095).
+// Run DTP/DTS drive-test commands to find actual stall ADC for each side,
+// then set threshold to ~80% of the observed stall peak.
+#define PORT_STALL_THRESHOLD  300   // PORT peaks ~116-304 running; tune after DTP
+#define STBD_STALL_THRESHOLD  450   // STBD stalled at 509; 450 works fine
+
 ActuatorController portTab(
   "PORT",
   PORT_RPWM, PORT_LPWM, PORT_R_EN, PORT_L_EN, PORT_R_IS, PORT_L_IS,
-  PORT_RPWM_CH, PORT_LPWM_CH
+  PORT_RPWM_CH, PORT_LPWM_CH,
+  PORT_STALL_THRESHOLD
 );
 ActuatorController stbdTab(
   "STBD",
   STBD_RPWM, STBD_LPWM, STBD_R_EN, STBD_L_EN, STBD_R_IS, STBD_L_IS,
-  STBD_RPWM_CH, STBD_LPWM_CH
+  STBD_RPWM_CH, STBD_LPWM_CH,
+  STBD_STALL_THRESHOLD
 );
 
 // Presets: percentages of full travel (0-100).

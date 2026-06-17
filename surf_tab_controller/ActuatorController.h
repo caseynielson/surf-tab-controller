@@ -33,7 +33,8 @@ public:
     uint8_t pin_rpwm, uint8_t pin_lpwm,
     uint8_t pin_r_en, uint8_t pin_l_en,
     uint8_t pin_r_is, uint8_t pin_l_is,
-    uint8_t ledc_rpwm_ch, uint8_t ledc_lpwm_ch
+    uint8_t ledc_rpwm_ch, uint8_t ledc_lpwm_ch,
+    int stallThreshold = STALL_THRESHOLD  // per-actuator override; default from config.h
   );
 
   // Initialize GPIO/PWM and load calibration from NVS
@@ -90,6 +91,8 @@ private:
   uint32_t      _targetMs     = 0;
   uint32_t      _fullTravelMs = ACTUATOR_DEFAULT_TRAVEL_MS;
   bool          _homed        = false;
+
+  int      _stallThreshold = STALL_THRESHOLD;  // per-instance, set in constructor
 
   uint32_t _moveStartMs    = 0;
   uint32_t _posAtMoveStart = 0;
