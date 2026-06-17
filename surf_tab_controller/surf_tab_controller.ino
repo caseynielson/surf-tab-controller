@@ -117,7 +117,21 @@ void handleCommand(const String& raw) {
   c.toUpperCase();
 
   if      (c == "CAL")                    runCalibration();
-  else if (c == "HOME")                   { systemReady = false; }
+  else if (c == "HOME") {
+    systemReady = false;
+    Serial.println("Homing...");
+    bool portOK = PORT_ENABLED ? portTab.home() : true;
+    bool stbdOK = STBD_ENABLED ? stbdTab.home() : true;
+    if (portOK && stbdOK) {
+      systemReady = true;
+      digitalWrite(STATUS_LED, HIGH);
+      Serial.println("Homed OK. System ready.");
+      uiSerial.println("READY");
+      goToPreset(0);
+    } else {
+      Serial.println("Home FAILED. Type HOME to retry, CAL to calibrate.");
+    }
+  }
   else if (c == "N" || c == "NEUTRAL")    goToPreset(0);
   else if (c == "L" || c == "SURF_LEFT")  goToPreset(1);
   else if (c == "R" || c == "SURF_RIGHT") goToPreset(2);
@@ -211,23 +225,8 @@ void setup() {
 
 void loop() {
   if (!systemReady) {
-    // Don't hammer the actuators: wait 3s between home retries.
-    // Without 680Ω IS resistors, stall is never detected and the motor
-    // would run against the end-stop continuously. This limits damage.
-    static uint32_t nextRetryMs = 0;
-    if (millis() < nextRetryMs) return;
-    Serial.println("Retrying home... (Type CAL to calibrate, check IS resistors if failing)");
-    bool portOK = PORT_ENABLED ? portTab.home() : true;
-    bool stbdOK = STBD_ENABLED ? stbdTab.home() : true;
-    if (portOK && stbdOK) {
-      systemReady = true;
-      digitalWrite(STATUS_LED, HIGH);
-      Serial.println("Re-homed OK.");
-      uiSerial.println("READY");
-      goToPreset(0);
-    } else {
-      nextRetryMs = millis() + 3000;  // 3s pause before next attempt
-    }
+    // Do NOT auto-retry homing -- motors grinding against end-stops is harmful.
+    // User must type HOME to retry or CAL to calibrate.
     return;
   }
 
