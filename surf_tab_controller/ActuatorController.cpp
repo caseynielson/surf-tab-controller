@@ -133,23 +133,36 @@ uint32_t ActuatorController::calibrate() {
 // ---- Home -------------------------------------------------------------------
 
 bool ActuatorController::home() {
-  Serial.printf("[%s] homing -- retracting to stall...\n", _name);
+  Serial.printf("[%s] homing -- retracting to stall (THRESHOLD=%d)...\n",
+                _name, STALL_THRESHOLD);
+  Serial.printf("[%s]   t(ms)  L_IS\n", _name);
   _state = ActuatorState::HOMING;
   _homed = false;
   _retract(ACTUATOR_FULL_SPEED);
 
   uint32_t startMs      = millis();
   uint32_t stallStartMs = 0;
+  uint32_t lastPrintMs  = 0;
   bool     stallPending = false;
 
   while (true) {
     if (millis() - startMs > HOME_RETRACT_TIMEOUT_MS) {
       _stopMotor();
       _state = ActuatorState::ERROR;
-      Serial.printf("[%s] homing TIMEOUT -- check wiring\n", _name);
+      Serial.printf("[%s] homing TIMEOUT (%lums) -- L_IS never exceeded %d\n",
+                    _name, millis() - startMs, STALL_THRESHOLD);
+      Serial.printf("[%s]   Check: IS resistors to GND? IBT-2 12V present? EN pins connected?\n", _name);
       return false;
     }
     int adc = analogRead(_pin_l_is);
+
+    if (millis() - lastPrintMs >= 250) {
+      Serial.printf("[%s]   %5lu  %4d%s\n",
+                    _name, millis() - startMs, adc,
+                    (adc > STALL_THRESHOLD) ? "  <- STALL?" : "");
+      lastPrintMs = millis();
+    }
+
     if (adc > STALL_THRESHOLD) {
       if (!stallPending) {
         stallPending = true;
@@ -168,6 +181,41 @@ bool ActuatorController::home() {
     }
     delay(10);
   }
+}
+
+// ---- Drive test ------------------------------------------------------------
+
+int ActuatorController::driveTest(bool extend, uint16_t durationMs) {
+  Serial.printf("[%s] DRIVE TEST: %s for %ums (STALL_THRESHOLD=%d)\n",
+                _name, extend ? "EXTEND (R_IS=GPIO active)" : "RETRACT (L_IS=GPIO active)",
+                durationMs, STALL_THRESHOLD);
+  Serial.printf("[%s]   t(ms)   R_IS   L_IS   active\n", _name);
+
+  if (extend) _extend(ACTUATOR_FULL_SPEED);
+  else         _retract(ACTUATOR_FULL_SPEED);
+
+  uint32_t startMs     = millis();
+  uint32_t lastPrintMs = 0;
+  int      peakAdc     = 0;
+
+  while (millis() - startMs < durationMs) {
+    int r      = analogRead(_pin_r_is);
+    int l      = analogRead(_pin_l_is);
+    int active = extend ? r : l;  // only the active half-bridge carries current
+    if (active > peakAdc) peakAdc = active;
+
+    if (millis() - lastPrintMs >= 100) {
+      Serial.printf("[%s]   %5lu   %4d   %4d   %4d%s\n",
+                    _name, millis() - startMs, r, l, active,
+                    (active > STALL_THRESHOLD) ? "  <- STALL" : "");
+      lastPrintMs = millis();
+    }
+    delay(10);
+  }
+  _stopMotor();
+  Serial.printf("[%s] DRIVE TEST done -- peak active IS = %d  (threshold=%d)\n",
+                _name, peakAdc, STALL_THRESHOLD);
+  return peakAdc;
 }
 
 // ---- Movement ---------------------------------------------------------------

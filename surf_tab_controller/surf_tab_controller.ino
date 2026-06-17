@@ -143,8 +143,19 @@ void handleCommand(const String& raw) {
       (pFull != ACTUATOR_DEFAULT_TRAVEL_MS) ? "yes" : "no (run CAL)");
   }
   else if (c == "A" || c == "ADC") {
-    Serial.printf("R_IS(34)=%4d  L_IS(35)=%4d\n",
+    // Snapshot read (motor stopped). Use DTP/DTS for live drive-test readings.
+    Serial.printf("PORT: R_IS(34)=%4d  L_IS(35)=%4d\n",
       analogRead(PORT_R_IS), analogRead(PORT_L_IS));
+    Serial.printf("STBD: R_IS(36)=%4d  L_IS(39)=%4d\n",
+      analogRead(STBD_R_IS), analogRead(STBD_L_IS));
+  }
+  else if (c == "DTP") {
+    // Drive PORT RETRACT for 3s; prints both IS channels live at 100ms.
+    // Run this to confirm IS wiring before home/cal.
+    portTab.driveTest(false, 3000);
+  }
+  else if (c == "DTS") {
+    stbdTab.driveTest(false, 3000);
   }
   else if (c == "HELP") {
     Serial.println("Commands:");
@@ -156,7 +167,9 @@ void handleCommand(const String& raw) {
     Serial.println("  D/FULL_DOWN  -- both 95%");
     Serial.println("  STOP         -- immediate stop");
     Serial.println("  STATUS       -- positions and calibration state");
-    Serial.println("  ADC          -- read raw current sense ADC values (debug)");
+    Serial.println("  ADC          -- snapshot IS ADC values (motor stopped)");
+    Serial.println("  DTP          -- PORT retract 3s, print IS live (diagnose stall detect)");
+    Serial.println("  DTS          -- STBD retract 3s, print IS live");
   }
   else if (c.length() > 0) {
     Serial.printf("Unknown: %s (type HELP)\n", c.c_str());

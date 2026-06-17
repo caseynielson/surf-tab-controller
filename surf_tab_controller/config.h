@@ -42,3 +42,8 @@
 // Serial baud rates
 #define SERIAL_BAUD    115200
 #define UI_SERIAL_BAUD 115200
+
+// Actuator enable flags — set false to skip homing/operation on bench
+// without that actuator wired. Both true for normal boat operation.
+#define PORT_ENABLED   true
+#define STBD_ENABLED   false

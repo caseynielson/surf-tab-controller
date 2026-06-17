@@ -57,6 +57,11 @@ public:
   // Returns measured travel ms, or 0 on failure.
   uint32_t calibrate();
 
+  // Diagnostic: drive motor for durationMs and print both IS ADC values at 100ms.
+  // extend=true → forward (R_IS active), extend=false → retract (L_IS active).
+  // Blocking. Returns peak active-channel ADC seen.
+  int driveTest(bool extend, uint16_t durationMs = 3000);
+
   // NVS persistence - loadCalibration() called automatically in begin()
   void loadCalibration();
   void saveCalibration(uint32_t travelMs);
