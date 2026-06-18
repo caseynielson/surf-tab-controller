@@ -24,14 +24,20 @@
 #define ACTUATOR_PWM_RES            8      // bits (0-255)
 #define ACTUATOR_FULL_SPEED         220    // PWM duty (0-255)
 
-// Stall detection
+// Stall detection (used during CAL extend-to-stall phase)
 // Running current: ADC ~298 at 3A; stall: ADC ~596 at 6A (with 680Ω IS resistor)
-// Observed stall ADC range: 450–741 — raise STALL_THRESHOLD if false triggers occur.
 // Run "CAL" and read suggested threshold from serial output.
 #define STALL_THRESHOLD           450    // ADC counts (0-4095); tune after running CAL
-#define STALL_CONFIRM_MS          150    // must exceed threshold for this long to confirm
-#define HOME_RETRACT_TIMEOUT_MS  20000   // abort homing if no stall within this time (20s covers full travel from any start position)
+#define STALL_CONFIRM_MS          150    // ms: must exceed threshold continuously to confirm stall
 #define CAL_EXTEND_TIMEOUT_MS    15000   // abort calibration extend if no stall
+
+// Homing: Lenco actuators have internal limit switches that OPEN at end-of-travel.
+// When the switch opens, motor current drops to near-zero — we detect the dropout.
+// We first extend briefly to pull off the retract limit, then retract into it.
+#define HOME_PREEXTEND_MS         600    // ms to extend before retracting (clears limit switch)
+#define HOME_RUNNING_THRESHOLD    100    // ADC: motor is drawing current (switch closed, moving)
+#define HOME_DROPOUT_THRESHOLD     60    // ADC: current gone (limit switch opened = at home)
+#define HOME_RETRACT_TIMEOUT_MS  20000   // abort if limit switch dropout never detected
 
 // PWM ledc channels
 #define PORT_RPWM_CH   0

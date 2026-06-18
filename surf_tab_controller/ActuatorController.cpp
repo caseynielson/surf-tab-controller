@@ -135,52 +135,76 @@ uint32_t ActuatorController::calibrate() {
 // ---- Home -------------------------------------------------------------------
 
 bool ActuatorController::home() {
-  Serial.printf("[%s] homing -- retracting to stall (THRESHOLD=%d)...\n",
-                _name, _stallThreshold);
-  Serial.printf("[%s]   t(ms)  L_IS\n", _name);
+  // Lenco actuators have internal limit switches that OPEN at end-of-travel.
+  // At the retract end-stop the switch is already open, so the motor draws no
+  // current — a current-spike stall detect never fires.
+  //
+  // Strategy:
+  //   1. Extend briefly (HOME_PREEXTEND_MS) to pull off the retract limit switch,
+  //      ensuring current will flow when we retract.
+  //   2. Retract and watch for current to DROP from running level to near-zero.
+  //      That dropout = limit switch just opened = home position found.
+
   _state = ActuatorState::HOMING;
   _homed = false;
+
+  // Step 1: pre-extend to clear retract limit switch
+  Serial.printf("[%s] homing -- extending %dms to clear limit switch...\n",
+                _name, HOME_PREEXTEND_MS);
+  _extend(ACTUATOR_FULL_SPEED);
+  delay(HOME_PREEXTEND_MS);
+  _stopMotor();
+  delay(100);  // brief settle before reversing
+
+  // Step 2: retract and detect current dropout (limit switch opening = home)
+  Serial.printf("[%s] retracting -- watching for limit switch dropout (<=%d ADC)...\n",
+                _name, HOME_DROPOUT_THRESHOLD);
+  Serial.printf("[%s]   t(ms)  L_IS\n", _name);
   _retract(ACTUATOR_FULL_SPEED);
 
-  uint32_t startMs      = millis();
-  uint32_t stallStartMs = 0;
-  uint32_t lastPrintMs  = 0;
-  bool     stallPending = false;
+  uint32_t startMs     = millis();
+  uint32_t lastPrintMs = 0;
+  uint32_t dropStartMs = 0;
+  bool     runningSeen = false;  // have we seen current flowing (switch closed)?
+  bool     dropPending = false;
 
   while (true) {
     if (millis() - startMs > HOME_RETRACT_TIMEOUT_MS) {
       _stopMotor();
       _state = ActuatorState::ERROR;
-      Serial.printf("[%s] homing TIMEOUT (%lums) -- L_IS never exceeded %d\n",
-                    _name, millis() - startMs, _stallThreshold);
-      Serial.printf("[%s]   Check: IS resistors to GND? IBT-2 12V present? EN pins connected?\n", _name);
+      Serial.printf("[%s] homing TIMEOUT -- limit switch dropout never seen\n", _name);
+      Serial.printf("[%s]   running_seen=%d  Check: 12V present? Motor wires on B+/B-?\n",
+                    _name, (int)runningSeen);
       return false;
     }
+
     int adc = analogRead(_pin_l_is);
 
     if (millis() - lastPrintMs >= 250) {
-      Serial.printf("[%s]   %5lu  %4d%s\n",
-                    _name, millis() - startMs, adc,
-                    (adc > _stallThreshold) ? "  <- STALL?" : "");
+      Serial.printf("[%s]   %5lu  %4d\n", _name, millis() - startMs, adc);
       lastPrintMs = millis();
     }
 
-    if (adc > _stallThreshold) {
-      if (!stallPending) {
-        stallPending = true;
-        stallStartMs = millis();
-      } else if (millis() - stallStartMs >= STALL_CONFIRM_MS) {
+    if (adc >= HOME_RUNNING_THRESHOLD) runningSeen = true;
+
+    // Dropout: current was flowing, now near-zero = limit switch opened = home
+    if (runningSeen && adc <= HOME_DROPOUT_THRESHOLD) {
+      if (!dropPending) {
+        dropPending = true;
+        dropStartMs = millis();
+      } else if (millis() - dropStartMs >= STALL_CONFIRM_MS) {
         _stopMotor();
         _positionMs = 0;
         _homed      = true;
         _state      = ActuatorState::IDLE;
-        Serial.printf("[%s] homed OK (stallADC=%d, t=%lums)\n",
-                      _name, adc, millis() - startMs);
+        Serial.printf("[%s] homed OK -- limit switch dropout at t=%lums (L_IS=%d)\n",
+                      _name, millis() - startMs, adc);
         return true;
       }
     } else {
-      stallPending = false;
+      dropPending = false;
     }
+
     delay(10);
   }
 }
