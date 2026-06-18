@@ -26,8 +26,11 @@ HardwareSerial uiSerial(2);
 // Per-actuator stall thresholds (ADC counts 0-4095).
 // Run DTP/DTS drive-test commands to find actual stall ADC for each side,
 // then set threshold to ~80% of the observed stall peak.
-#define PORT_STALL_THRESHOLD  300   // PORT peaks ~116-304 running; tune after DTP
-#define STBD_STALL_THRESHOLD  450   // STBD stalled at 509; 450 works fine
+// Thresholds set from DTP/DTS drive-test results.
+// PORT: running current 179-365 ADC, stall 1041 ADC -> threshold 500
+// STBD: running current unknown, stall 509 ADC -> threshold 450
+#define PORT_STALL_THRESHOLD  500
+#define STBD_STALL_THRESHOLD  450
 
 ActuatorController portTab(
   "PORT",
